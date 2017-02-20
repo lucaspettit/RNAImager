@@ -1,10 +1,9 @@
 import pygame
+from PIL import Image
 import numpy
 
-from os import listdir
-from os.path import isfile, join, basename
-import sys
 import queue
+
 
 
 class Node(object):
@@ -17,12 +16,21 @@ class Node(object):
         self.value = value
         self.x, self.y = coord
 
-    def __get__(self, obj, objtype):
-        return self.value
+    def __eq__(self, other):
+        return self.value == other.value
 
-    def __set__(self, obj, value):
-        if isinstance(value, int) or isinstance(value, float):
-            self.value = value
+    def __gt__(self, other):
+        return self.value > other.value
+
+    def __ge__(self, other):
+        return self.value >= other.value
+
+    def __lt__(self, other):
+        return self.value < other.value
+
+    def __le__(self, other):
+        return self.value <= other.value
+
 
 class RemoveToFit(object):
     # RemoveToFit - removes the lowest and highest values from the dataset and
@@ -36,21 +44,19 @@ class RemoveToFit(object):
     __data_prepped = False
     __iteration = 0
 
-    __forest = None
-    __compressed_image = None
+    __forest = []
 
-    __compression_ratio = 0
-    __mm_thold = 0.15
-    __std_thold = 0.5
+    __COMPW = 256
+    __comp_w, __comp_h = 0, 0
     __total_trim_iterations = 0
 
     __debug = False
     __viewFullSpectrum = True
 
-    __orig_image = None
-    __data = None
-    __orig_size = None
-    __data_size = (0, 0)
+    __compressed_image = None
+    __image = None
+    __data = []
+    __data_len = 0
 
     __min_cluster_size = 0
 
@@ -63,27 +69,26 @@ class RemoveToFit(object):
         else:
             try:
                 self.reset()
-                self.__orig_image = pygame.image.load(path)
-                self.__orig_size = self.__orig_image.get_rect().size
+                self.__image = Image.open(path)
                 return True
             except pygame.error:
                 print('Unable to open image: ' + path)
                 return False
 
     def reset(self):
-        self.__forest = None
+        self.__forest = []
         self.__compressed_image = None
-        self.__data = None
-        self.__data_size = (0, 0)
+        self.__comp_h = 0
+        self.__data = []
         self.__data_prepped = False
         self.__iteration = 0
         self.__total_trim_iterations = 0
 
     def compressionRatio(self, cr=None):
         if cr is None:
-          return self.__compression_ratio
+            return self.__comp_w
         elif cr >= 0:
-          self.__compression_ratio = cr
+            self.__COMPW = cr
         else:
             print('Invalid compression ratio: ' + str(cr))
             raise SystemExit
@@ -98,7 +103,7 @@ class RemoveToFit(object):
             if not self.image(img):
                 return False
 
-        if self.__orig_image is None:
+        if self.__image is None:
             print('No Image to evaluate')
             return False
 
@@ -106,54 +111,50 @@ class RemoveToFit(object):
             return False
 
         i=0
-        while(self.__trim__(i)):
+        while self.__trim__(i):
             i += 1
 
-        self.__remove_noise__()
+        #self.__remove_noise__()
 
-        if self.__debug:
-            print('Completed calculation')
-            print(str(self.__total_trim_iterations) + ' total iterations')
+        #if self.__debug:
+        #    print('Completed calculation')
+        #    print(str(self.__total_trim_iterations) + ' total iterations')
 
     def __transform_data__(self):
+        # Transforms self.__image into a numpy array of Nodes
         if self.__debug:
             print('Compressing...')
 
-        w, h = self.__orig_size
-        if self.__compression_ratio > 0:
-            jw, jh = round(w / self.__compression_ratio), round(h / self.__compression_ratio)
-            if self.__debug:
-                print('original image dimensions: ' + str(w) + ', ' + str(h))
-                print('compression rate: ' + str(self.__compression_ratio))
-                print('jump count: ' + str(jw) + ', ' + str(jh))
-
-            if jw == 0 or jh == 0:
-                print('Exiting compression: compression ratio is grater than image dimensions')
-                return False
-
-            pixels = pygame.surfarray.array3d(self.__orig_image)
-            pixels = pixels[::jw, ::jh, :]
-
-            w, h = int(w / jw), int(h / jh)
+        # compress image
+        w, h = self.__image.size
+        if self.__COMPW > 0:
+            cw = (self.__COMPW / float(w))
+            ch = int((float(h) * float(cw)))
+            cw = self.__COMPW
+            self.__image = self.__image.resize((cw, ch), Image.BICUBIC)
+            #ch, cw = img.size
+            self.__comp_w, self.__comp_h = ch, cw
         else:
-            pixels = pygame.surfarray.array3d(self.__orig_image)
+            ch, cw = self.__image.size
+            self.__comp_h, self.__comp_w = self.__image.size
+            img = self.__image
 
-        self.__data = numpy.zeros((w, h))
-        self.__forest = numpy.zeros((w, h))
-        self.__compressed_image = pixels
-
+        # transform data
         if self.__debug:
-            print('new image dimensions: ' + str(w) + ', ' + str(h))
+            print('new image dimensions: ' + str(cw) + ', ' + str(ch))
+            print('transforming data...')
 
-        for x in range(w):
-            for y in range(h):
-                r, g, b = pixels[x, y]
-                r, g, b = float(r), float(g), float(b)
-                self.__data[x, y] = int((r + g + b) / 3)
+        pixels = []
+        pdata = list(self.__image.getdata(band=1))
+        for i in range(int(ch * cw)):
+            pixel = pdata[i]
+            py = int(i % cw)
+            px = int(i / cw)
+            pixels.append(Node(pixel, (px, py)))
 
-        self.__data_size = (w, h)
-        self.__min_cluster_size = 18
-        self._image = pygame.surfarray.make_surface(pixels)
+        self.__compressed_image = numpy.array(pixels)
+        self.__data = numpy.sort(self.__compressed_image)
+        self.__forest = []
         self.__data_prepped = True
 
         if self.__debug:
@@ -161,65 +162,51 @@ class RemoveToFit(object):
         return True
 
     def __trim__(self, iteration):
-        if self.__debug:
-            print('Trimming...')
-            print('Iteration: ' + str(iteration))
+        #if self.__debug:
+        #    print('Trimming...')
+        #    print('Iteration: ' + str(iteration))
+        #    print('Data Size: ' + str(len(self.__data)))
 
         iteration += 1
-        mean = numpy.mean(self.__data)
-        median = numpy.median(self.__data)
-        std = numpy.std(self.__data)
-
-        if self.__debug:
-            print('mean: ' + str(mean))
-            print('median: ' + str(median))
-            print('std: ' + str(std))
-
-
-        if abs(mean - median) <= self.__mm_thold and std < self.__std_thold:
-            if self.__debug:
-                print('End threshold passed')
+        length = len(self.__data)
+        if length == 0:
             return False
+        mean, median, minimum, maximum = self.__stats__(self.__data)
 
-        minimum = numpy.min(self.__data)
-        maximum = numpy.max(self.__data)
+        #if self.__debug:
+        #    print('mean: ' + str(mean))
+        #    print('median: ' + str(median))
 
         toTrim_L = minimum + int(0.1 * (mean - minimum))
-        toTrim_U = maximum - int(0.18 * (maximum - mean))
+        toTrim_U = maximum - int(0.1 * (maximum - mean))
 
-        if self.__debug:
-            print('Upper Threshold: ' + str(toTrim_U))
-            print('Lower Threshold: ' + str(toTrim_L))
+        #if self.__debug:
+        #    print('Upper Threshold: ' + str(toTrim_U))
+        #    print('Lower Threshold: ' + str(toTrim_L))
 
-        w, h = self.__data_size
         lower_count = 0
         upper_count = 0
 
-        for y in range(h):
-            for x in range(w):
-                if self.__forest[x, y] != 0:
-                    continue
+        #print('data range: [' + str(self.__data[0].value) + ', ' + str(self.__data[-1].value) + ']')
 
-                value = self.__data[x, y]
-                if value <= toTrim_L:
-                    self.__data[x, y] = mean
-                    self.__forest[x, y] = -int(iteration)
-                    lower_count += 1
-                elif value >= toTrim_U:
-                    self.__data[x, y] = mean
-                    self.__forest[x, y] = int(iteration)
-                    upper_count += 1
+        for lower_count in range(length):
+            node = self.__data[lower_count]
+            if node.value > toTrim_L:
+                break
+            self.__forest.append(Node(-int(iteration), (node.x, node.y)))
 
-        if lower_count == 0 and upper_count == 0:
-            if self.__debug:
-                print('no pixels removed')
-                print('End threshold passed')
-            return False
+        for upper_count in range(length):
+            node = self.__data[-upper_count-1]
+            if node.value < toTrim_U:
+                break
+            self.__forest.append(Node(int(iteration), (node.x, node.y)))
 
-        if self.__debug:
-            print('Removed ' + str(upper_count) + ' upper bound pixels')
-            print('Removed ' + str(lower_count) + ' lower bound pixels')
-            print('Done!')
+        self.__data = self.__data[lower_count:-upper_count-1]
+
+        #if self.__debug:
+        #    print('Removed ' + str(upper_count) + ' upper bound pixels')
+        #    print('Removed ' + str(lower_count) + ' lower bound pixels')
+        #    print('Done!')
 
         self.__total_trim_iterations += 1
         return True
@@ -281,28 +268,33 @@ class RemoveToFit(object):
 
     def __render__(self, viewFullSpectrum=False):
         if self.__compressed_image is None:
-            return self.__orig_image
+            return self.__image
 
-        a = int(255 / self.__total_trim_iterations)
-        aa = int(200 / self.__total_trim_iterations)
-        w, h = self.__data_size
-        grid = numpy.zeros((w, h, 3))
+        if len(self.__forest) == 0:
+            print('forest len == 0')
+            img = numpy.zeros((self.__comp_w, self.__comp_h))
+            for node in self.__compressed_image:
+                x, y = node.x, node.y
+                img[x, y] = node.value
+            return img
 
-        for x in range(w):
-            for y in range(h):
-                if self.__forest[x, y] > 0:
-                    f = self.__forest[x, y]
-                    grid[x, y] = max((255 - (f*a)), 0), min((f*aa), 200), 0
+        else:
+            rb = int(255 / (1.5 * self.__total_trim_iterations))
+            g = int(255 / self.__total_trim_iterations)
+            length = len(self.__forest)
+            grid = numpy.zeros((self.__comp_w, self.__comp_h, 3))
+            print('grid shape: ' + str(grid.shape))
 
-                elif viewFullSpectrum and self.__forest[x, y] < 0:
-                    f = -int(self.__forest[x, y])
-                    grid[x, y] = 0, min((f * a), 255), max(200 - (f*aa), 0)
+            for node in self.__forest:
+                v = node.value
+                if v > 0:
+                    color = max((255 - (v * rb)), 0), min((v * g), 255), 0
+                    grid[node.x, node.y] = color
+                elif viewFullSpectrum and v < 0:
+                    v = -v
+                    grid[node.x, node.y] = 0, min((v * g), 255), max(255 - (v * rb), 0)
 
-                else:
-                    grid[x, y] = self.__compressed_image[x, y]
-                    #grid[x, y] = (0, 200, 0)
-
-        return pygame.surfarray.make_surface(grid)
+            return Image.fromarray(numpy.uint8(grid))
 
     def __render__heatmap_i__(self, value):
 
@@ -332,3 +324,16 @@ class RemoveToFit(object):
 
         return (r, g, b)
 
+    def __stats__(self, data):
+        mean = float(0)
+        smallest, largest = 255, 0
+
+        for node in data:
+            value = node.value
+            mean += value
+            smallest = min(smallest, value)
+            largest = max(largest, value)
+
+        mean /= float(len(data))
+        median = ((largest - smallest) / 2) + smallest
+        return mean, median, smallest, largest
