@@ -10,15 +10,11 @@ from tkinter import *
 from PIL import Image, ImageTk
 from os import listdir
 from os.path import isfile, join, basename
-import pygame as py
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
-from matplotlib.backend_bases import key_press_handler
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 import matplotlib.image as mping
-
-from numpy import arange, sin, pi
+import matplotlib.patches as patches
 
 from Imager import RemoveToFit
 
@@ -37,6 +33,8 @@ class Application(Frame):
     _no_image = ''
     _num_images = 0
     _curr_image_index = 0
+
+    _stupid_patches = []
 
     _imager = None
 
@@ -70,7 +68,6 @@ class Application(Frame):
 
         # image processing object
         self._imager = RemoveToFit(True)
-        self._imager.compressionRatio(700)
 
         # set canvas area
         self._canvas = FigureCanvasTkAgg(self._fig, master=master)
@@ -95,6 +92,11 @@ class Application(Frame):
             path = join(self._image_dir, self._paths[self._curr_image_index])
             self._subplot.imshow(mping.imread(path))
             self._subplot.axis('off')
+
+            for p in self._stupid_patches:
+                p.remove()
+            self._stupid_patches = []
+
             self._canvas.show()
 
             if self._debug:
@@ -106,6 +108,11 @@ class Application(Frame):
             path = join(self._image_dir, self._paths[self._curr_image_index])
             self._subplot.imshow(mping.imread(path))
             self._subplot.axis('off')
+
+            for p in self._stupid_patches:
+                p.remove()
+            self._stupid_patches = []
+
             self._canvas.show()
 
             if self._debug:
@@ -113,11 +120,19 @@ class Application(Frame):
 
     def _Eval(self):
         if self._curr_image_index >= 0:
-            self._imager.image(join(self._image_dir, self._paths[self._curr_image_index]))
-            self._imager.eval()
-            buffer = self._imager.image()
+            image = Image.open(join(self._image_dir, self._paths[self._curr_image_index]))
+            self._imager.eval(image, COMPW=256)
+            buffer, regions = self._imager.image()
             self._subplot.imshow(buffer, interpolation='nearest')
             self._subplot.axis('off')
+
+            for r in regions:
+                coord, size = r
+                p = patches.Rectangle(coord, size[0], size[1], fill=False, edgecolor='blue')
+                self._stupid_patches.append(p)
+
+                self._subplot.add_patch(p)
+
             self._canvas.show()
 
 

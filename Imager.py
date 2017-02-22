@@ -45,10 +45,11 @@ class RemoveToFit(object):
     __iteration = 0
 
     __forest = []
+    __regions = []
 
     __COMPW = 256
     __comp_w, __comp_h = 0, 0
-    __total_trim_iterations = 0
+    _trim_count = 0
 
     __debug = False
     __viewFullSpectrum = True
@@ -58,31 +59,25 @@ class RemoveToFit(object):
     __data = []
     __data_len = 0
 
+    __original_size = 0, 0
+
     __min_cluster_size = 0
 
     def __init__(self, debug=False):
         self.__debug = debug
 
-    def image(self, path=None):
-        if path is None:
-            return self.__render__(self.__viewFullSpectrum)
-        else:
-            try:
-                self.reset()
-                self.__image = Image.open(path)
-                return True
-            except pygame.error:
-                print('Unable to open image: ' + path)
-                return False
+    def image(self):
+        return self._render(self.__data)
 
     def reset(self):
         self.__forest = []
+        self.__regions = []
         self.__compressed_image = None
         self.__comp_h = 0
         self.__data = []
         self.__data_prepped = False
         self.__iteration = 0
-        self.__total_trim_iterations = 0
+        self._trim_count = 0
 
     def compressionRatio(self, cr=None):
         if cr is None:
@@ -98,134 +93,145 @@ class RemoveToFit(object):
             self.__trim__(self.__iteration)
             self.__iteration += 1
 
-    def eval(self, img=None):
-        if img != None:
-            if not self.image(img):
-                return False
+    def eval(self, img, COMPW=128):
+        seed = self._prepData(img, COMPW)
+        self.__data = seed
 
-        if self.__image is None:
-            print('No Image to evaluate')
-            return False
+        forest = self._plantForest(seed)
 
-        if not self.__transform_data__():
-            return False
+        regions = self._buildRegions(forest)
+        self.__regions = regions
 
-        i=0
-        while self.__trim__(i):
-            i += 1
+        print('Done!')
 
-        #self.__remove_noise__()
-
-        #if self.__debug:
-        #    print('Completed calculation')
-        #    print(str(self.__total_trim_iterations) + ' total iterations')
-
-    def __transform_data__(self):
-        # Transforms self.__image into a numpy array of Nodes
-        if self.__debug:
+    def _prepData(self, image, COMPW=128, debug=False):
+        if debug:
             print('Compressing...')
 
         # compress image
-        w, h = self.__image.size
-        if self.__COMPW > 0:
-            cw = (self.__COMPW / float(w))
+        w, h = image.size
+        if COMPW > 0:
+            cw = (COMPW / float(w))
             ch = int((float(h) * float(cw)))
-            cw = self.__COMPW
-            self.__image = self.__image.resize((cw, ch), Image.BICUBIC)
-            #ch, cw = img.size
-            self.__comp_w, self.__comp_h = ch, cw
+            cw = COMPW
+            image = image.resize((cw, ch), Image.ANTIALIAS)
+            cw, ch = image.size
         else:
-            ch, cw = self.__image.size
-            self.__comp_h, self.__comp_w = self.__image.size
-            img = self.__image
+            cw, ch = w, h
 
         # transform data
-        if self.__debug:
+        if debug:
             print('new image dimensions: ' + str(cw) + ', ' + str(ch))
             print('transforming data...')
 
         pixels = []
-        pdata = list(self.__image.getdata(band=1))
+        pdata = list(image.getdata(band=1))
         for i in range(int(ch * cw)):
             pixel = pdata[i]
             py = int(i % cw)
             px = int(i / cw)
             pixels.append(Node(pixel, (px, py)))
 
-        self.__compressed_image = numpy.array(pixels)
-        self.__data = numpy.sort(self.__compressed_image)
-        self.__forest = []
-        self.__data_prepped = True
+        raw = numpy.sort(numpy.array(pixels))
+        f = []
 
-        if self.__debug:
+        count, raw, f = self._trim(0, raw, f)
+        self._trim_count = count
+
+        grid = numpy.zeros((ch, cw))
+        x, y = 0, 0
+        for n in f:
+            x = max(n.x, x)
+            y = max(n.y, y)
+            grid[n.x, n.y] = n.value
+
+        if debug:
             print('Done!')
-        return True
 
-    def __trim__(self, iteration):
-        #if self.__debug:
-        #    print('Trimming...')
-        #    print('Iteration: ' + str(iteration))
-        #    print('Data Size: ' + str(len(self.__data)))
+        return grid
+
+    def _trim(self, iteration, pool, bucket):
 
         iteration += 1
-        length = len(self.__data)
+        length = len(pool)
         if length == 0:
-            return False
-        mean, median, minimum, maximum = self.__stats__(self.__data)
-
-        #if self.__debug:
-        #    print('mean: ' + str(mean))
-        #    print('median: ' + str(median))
+            return iteration, pool, bucket
+        mean, median, minimum, maximum = self._stats(pool)
 
         toTrim_L = minimum + int(0.1 * (mean - minimum))
         toTrim_U = maximum - int(0.1 * (maximum - mean))
 
-        #if self.__debug:
-        #    print('Upper Threshold: ' + str(toTrim_U))
-        #    print('Lower Threshold: ' + str(toTrim_L))
-
         lower_count = 0
         upper_count = 0
 
-        #print('data range: [' + str(self.__data[0].value) + ', ' + str(self.__data[-1].value) + ']')
-
         for lower_count in range(length):
-            node = self.__data[lower_count]
+            node = pool[lower_count]
             if node.value > toTrim_L:
                 break
-            self.__forest.append(Node(-int(iteration), (node.x, node.y)))
+            bucket.append(Node(-int(iteration), (node.x, node.y)))
 
         for upper_count in range(length):
-            node = self.__data[-upper_count-1]
+            node = pool[-upper_count-1]
             if node.value < toTrim_U:
                 break
-            self.__forest.append(Node(int(iteration), (node.x, node.y)))
+            bucket.append(Node(int(iteration), (node.x, node.y)))
 
-        self.__data = self.__data[lower_count:-upper_count-1]
+        pool = pool[lower_count:-upper_count-1]
 
-        #if self.__debug:
-        #    print('Removed ' + str(upper_count) + ' upper bound pixels')
-        #    print('Removed ' + str(lower_count) + ' lower bound pixels')
-        #    print('Done!')
+        return self._trim(iteration + 1, pool, bucket)
 
-        self.__total_trim_iterations += 1
-        return True
+    def _plantForest(self, seed):
+        forest = []
+        w, h = seed.shape
+        checked = {}
 
-    def __remove_noise__(self):
-        checked = numpy.zeros(self.__data_size)
-
-        w, h = self.__data_size
         for x in range(w):
             for y in range(h):
-                if checked[x, y] != 0:
-                    continue
-                if self.__forest[x, y] > 0:
-                    blob, checked = self.__bff__(self.__forest, checked, self.__data_size, (x, y), 0)
-                    if len(blob) < self.__min_cluster_size:
-                        for x, y in blob:
-                            self.__forest[x, y] = 0
+                value = seed[(x, y)]
+                if value > 0 and value not in checked:
+                    q = queue.Queue()
+                    q.put((x, y))
+                    tree = []
+                    checked[(x, y)] = True
 
-    def __neighbors__(self, coord, size):
+                    while not q.empty():
+                        i, j = q.get()
+                        tree.append([i, j])
+
+                        for di, dj in self._neighbors((i, j), (w, h)):
+                            if (di, dj) not in checked and seed[di, dj] > 0:
+                                checked[(di, dj)] = True
+                                q.put((di, dj))
+
+                    if len(tree) > 4:
+                        forest.append(numpy.array(tree))
+
+        return forest
+
+    def _buildRegions(self, forest):
+
+        regions = []
+
+        for f in forest:
+            x = f[:, 0]
+            y = f[:, 1]
+            mx = numpy.mean(x)
+            stdx = numpy.std(x)
+            x = mx - (2 * stdx)
+            w = 4 * stdx
+
+            my = numpy.mean(y)
+            stdy = numpy.std(y)
+            y = my - (2 * stdy)
+            h = 4 * stdy
+
+            rect = ((y, x), (h, w))
+
+            regions.append(rect)
+
+        return regions
+
+    def _neighbors(self, coord, size):
         x, y = coord
         w, h = size
         n = []
@@ -248,83 +254,27 @@ class RemoveToFit(object):
 
         return n
 
-    def __bff__(self, map, checked, size, start, thold):
-        q = queue.Queue()
-        q.put(start)
-        blob = []
-        x, y = start
-        checked[x, y] = 1
+    def _render(self, data, viewFullSpectrum=False):
 
-        while not q.empty():
-            x, y = q.get()
-            blob.append((x, y))
+        rb = int(255 / (1.5 * self._trim_count))
+        g = int(255 / self._trim_count)
 
-            for dx, dy in self.__neighbors__((x, y), size):
-                if checked[dx, dy] == 0 and map[dx, dy] >= thold:
-                    checked[dx, dy] = 1
-                    q.put((dx, dy))
+        w, h = data.shape
+        grid = numpy.zeros((w, h, 3))
 
-        return (blob, checked)
-
-    def __render__(self, viewFullSpectrum=False):
-        if self.__compressed_image is None:
-            return self.__image
-
-        if len(self.__forest) == 0:
-            print('forest len == 0')
-            img = numpy.zeros((self.__comp_w, self.__comp_h))
-            for node in self.__compressed_image:
-                x, y = node.x, node.y
-                img[x, y] = node.value
-            return img
-
-        else:
-            rb = int(255 / (1.5 * self.__total_trim_iterations))
-            g = int(255 / self.__total_trim_iterations)
-            length = len(self.__forest)
-            grid = numpy.zeros((self.__comp_w, self.__comp_h, 3))
-            print('grid shape: ' + str(grid.shape))
-
-            for node in self.__forest:
-                v = node.value
+        for x in range(w):
+            for y in range(h):
+                v = data[x, y]
                 if v > 0:
                     color = max((255 - (v * rb)), 0), min((v * g), 255), 0
-                    grid[node.x, node.y] = color
+                    grid[x, y] = color
                 elif viewFullSpectrum and v < 0:
                     v = -v
-                    grid[node.x, node.y] = 0, min((v * g), 255), max(255 - (v * rb), 0)
+                    grid[x, y] = 0, min((v * g), 255), max(255 - (v * rb), 0)
 
-            return Image.fromarray(numpy.uint8(grid))
+        return Image.fromarray(numpy.uint8(grid)), self.__regions
 
-    def __render__heatmap_i__(self, value):
-
-        range = 2 * self.__total_trim_iterations
-        gth_L = -int(self.__total_trim_iterations / 2)
-        gth_M = 0
-        gth_U = -gth_L
-        rth = gth_L
-        bth = gth_U
-
-        if isinstance(value, list) or isinstance(value, set) or isinstance(value, numpy.ndarray):
-            num = 0
-            for v in value:
-                num += v
-            value = num / len(value)
-
-        r, g, b = (0,0,0)
-
-        if value > rth:
-            r = (abs((value - rth) * 2) + 1 / range) * 255
-        if value > gth_L and value < gth_M:
-            g = (abs((value - gth_L) * 4) / range) * 255
-        if value > gth_M and value < gth_U:
-            g =  255 - (((abs(value - gth_L) * 4) / range) * 255)
-        if value < bth:
-            b = (abs(value * 2) / range) * 255
-
-        return (r, g, b)
-
-    def __stats__(self, data):
+    def _stats(self, data):
         mean = float(0)
         smallest, largest = 255, 0
 
