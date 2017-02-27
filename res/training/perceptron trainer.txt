@@ -1,0 +1,38 @@
+if __name__ == "__main__":
+    print('training ai')
+    train = [[float(x) for x in l.split(' ')] for l in open(join('res', join('training', 'data.dat')), 'r')]
+    test = []
+    train_length = int(len(train) * 0.90)
+    while len(train) > train_length:
+        index = random.randint(0, len(train)-1)
+        test.append(train[index])
+        del train[index]
+
+    train = numpy.array(train)
+    test = numpy.array(test)
+
+    len_w = len(train[0]) - 1
+    w = numpy.zeros(len_w)
+    res = []
+
+    for i in range(100):
+        w = _trainPerceptron(train, w, 0)
+        train_error = _perceptronError(w, 0, train)
+        test_error = _perceptronError(w, 0, test)
+        print(str(i) + ': ' + str(test_error) + ', ' + str(train_error))
+        res.append((test_error, w))
+
+    best = 1
+    for score, vector in res:
+        if score < best:
+            best = score
+            w = vector
+
+    print('best: ' + str(best))
+
+    output = ''
+    for v in w:
+        output += str(v) + ' '
+    f = open(join('res', 'w.dat'), 'w')
+    f.write(output)
+    f.close()
