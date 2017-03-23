@@ -3,7 +3,8 @@ from PIL import Image, ImageTk
 from os import listdir
 from os.path import isfile, join, basename
 
-paths = [join('snippets', f) for f in listdir('snippets') if isfile(join('snippets', f))]
+directory = 'corners'
+paths = [join(directory, f) for f in listdir(directory) if isfile(join(directory, f))]
 outfile = open('data.dat', 'w')
 
 for f in paths:
@@ -13,7 +14,7 @@ for f in paths:
     w *= scailer
     h *= scailer
     squariness = abs((w - h)/max(w, h))
-    label = basename(f).split('_')[0]
+    label = basename(f).split('_')[-1].split('.')[0]
 
     img = img.resize((28, 28))
     data = img.getdata(band=1)

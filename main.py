@@ -15,7 +15,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 import matplotlib.image as mping
 import matplotlib.patches as patches
-import numpy
 
 from Imager import RemoveToFit
 
@@ -121,8 +120,8 @@ class Application(Frame):
     def _Eval(self):
         if self._curr_image_index >= 0:
             image = Image.open(join(self._image_dir, self._paths[self._curr_image_index]))
-            self._imager.eval(image, COMPW=256)
-            buffer, acc, rej = self._imager.image(viewRaw=False, fullSpectrum=True)
+            self._imager.eval(image, COMPW=720)
+            buffer, acc, rej = self._imager.image(viewRaw=False, fullSpectrum=False)
 
             print('found ' + str(len(acc)))
 
@@ -179,7 +178,8 @@ class Application(Frame):
         self._curr_image = image
         self._subplot.imshow(self._curr_image)
         self._subplot.axis('off')
-        self._drawRegions(self._regions)
+        #self._drawRegions(self._regions)
+        self._canvas.show()
 
     def _drawRegions(self, regions):
         self._clearRegions()
@@ -191,7 +191,6 @@ class Application(Frame):
                 p = patches.Rectangle((x, y), size[0], size[1], fill=False, edgecolor=color)
                 self._stupid_patches.append(p)
                 self._subplot.add_patch(p)
-        self._canvas.show()
 
     def _clearRegions(self):
         for p in self._stupid_patches:
