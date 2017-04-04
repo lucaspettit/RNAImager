@@ -13,12 +13,11 @@ for f in paths:
     scailer = 28/max(w, h)
     w *= scailer
     h *= scailer
-    squariness = abs((w - h)/max(w, h))
-    label = basename(f).split('_')[-1].split('.')[0]
+    label = 1 if int(basename(f).split('_')[-1].split('.')[0]) > 0 else -1
 
     img = img.resize((28, 28))
     data = img.getdata(band=1)
-    feature = str(int(w)) + ' ' + str(int(h)) + ' ' + str(squariness) + ' '
+    feature = ''
     for d in data:
         feature += str(d) + ' '
     feature += str(label) + '\n'

@@ -1,6 +1,6 @@
 from PIL import Image
 import numpy
-from AI import perceptron
+from os.path import isfile
 
 import queue
 
@@ -319,13 +319,45 @@ class RemoveToFit(object):
 
 
 class BestFit(object):
-    # _w = numpy.array([255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 0])
-    # _w = numpy.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255])
-    _w = numpy.array([-4.75, -4.75, -5.75, -4.75, -4.75, 2, 2, 2, -4.75, 2, 2, 2, -4.75, 2, 2, 2])
-    _base = 4
+    _w = None
+    _base = 28
     _ws = _base, _base
     _wd = _base * _base
     _step = 2
+
+    def __init__(self, path, train=False):
+        if isfile(path):
+            if not train:
+                self._w = [float(elem) for elem in open(path).readline().strip('\n').split(' ')]
+            else:
+                self._w = numpy.zeros(self._wd)
+                data = [[float(elem) for elem in line.strip('\n').split(' ')] for line in open(path).readlines()]
+                for i in range(10):
+                    for j in range(len(data)):
+                        x = numpy.array(data[j][:-1])
+                        y = data[j][-1]
+                        res = numpy.dot(self._w, x)
+                        if res * y <= 0:
+                            _x = y * x
+                            for k in range(self._wd):
+                                self._w[k] += _x[k]
+                            print(str(self._w))
+
+                s = ''
+                for i in range(self._base):
+                    s += str(i) + ' '
+        else:
+            self._w = numpy.zeros(self._wd)
+
+    def train(self, x, y):
+        if not isinstance(x, numpy.ndarray):
+            print('Error: input is not numpy array')
+            return
+        if y != 1 and y != -1:
+            print('Error: label is incorrect')
+            return
+
+        self._w = self._w + (x * y)
 
     def eval(self, img):
         # Quarters the image and evaluates each quadrant.
@@ -391,6 +423,32 @@ class BestFit(object):
         if tot == 0.0:
             return -999999
         return float(tot/len(sections))
+
+    def guessCorner(self, img):
+        w, h = img.size
+        if w != self._base or h != self._base:
+            print("Invalid image size. must be ({0}, {0})".format(self._base))
+            return "n/a"
+        x = numpy.array(img.getdata(band=1))
+        tl = numpy.dot(self._w, x)
+        x = numpy.array(img.rotate(90).getdata(band=1))
+        tr = numpy.dot(self._w, x)
+        x = numpy.array(img.rotate(180).getdata(band=1))
+        br = numpy.dot(self._w, x)
+        x = numpy.array(img.rotate(270).getdata(band=1))
+        bl = numpy.dot(self._w, x)
+        if tl < 0 and tr < 0 and br < 0 and bl < 0:
+            return "None"
+        if tl == tr and tl == br and tl == bl:
+            return "IDK"
+        if tl > tr and tl > br and tl > bl:
+            return "Top Left"
+        if tr > br and tr > bl:
+            return "Top Right"
+        if br > bl:
+            return "Bottom Right"
+        else:
+            return "Bottom Left"
 
     def evalSubSection(self, img):
         cache = dict()
@@ -461,3 +519,9 @@ class BestFit(object):
             best[quad] = rect, value
 
         return best
+
+    def predictRT(self, x):
+        return numpy.dot(self._w, x)
+
+    def w(self):
+        return self._w

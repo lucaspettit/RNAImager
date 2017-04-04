@@ -178,7 +178,7 @@ class Application(Frame):
         self._curr_image = image
         self._subplot.imshow(self._curr_image)
         self._subplot.axis('off')
-        #self._drawRegions(self._regions)
+        self._drawRegions(self._regions)
         self._canvas.show()
 
     def _drawRegions(self, regions):

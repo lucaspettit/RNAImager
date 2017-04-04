@@ -70,7 +70,7 @@ class Application(Frame):
         self._subplot.axis('off')
 
         # image processing object
-        self._imager = BestFit()
+        self._imager = BestFit(join('res', join('training'), join('data.dat')), train=True)
 
         # set canvas area
         self._canvas = FigureCanvasTkAgg(self._fig, master=master)
